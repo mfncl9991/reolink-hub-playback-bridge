@@ -75,10 +75,16 @@ either, which is worth knowing before you rely on it.
 2. Add this repository's URL with category **Integration**.
 3. Search for "Reolink Hub Playback Bridge" and install.
 4. Restart Home Assistant.
-5. Add the two files under `www/reolink-hub-playback-bridge/` as Lovelace resources.
-   Home Assistant only auto-registers frontend resources for HACS repositories
-   installed under the "plugin" category. This repo installs as an "Integration," so
-   you need to register them yourself:
+5. Go to **Settings → Devices & Services → Add Integration**, search for "Reolink
+   Hub Playback Bridge," and press Submit on the confirmation screen. There's
+   nothing to fill in - it reuses your already-configured `reolink` integration's
+   credentials automatically at request time.
+6. If your dashboards use the default **storage** mode, the two files under
+   `www/reolink-hub-playback-bridge/` are registered as Lovelace resources for you
+   automatically, in the right order, as part of step 5. Hard-refresh your browser
+   (Cmd/Ctrl+Shift+R) afterward to clear any cached copy. If your dashboards are in
+   **YAML mode** instead, or you don't see the card after refreshing, add them by
+   hand:
    1. Make sure your user profile has **Advanced Mode** turned on (**Settings →
       People → your profile**, toggle **Advanced Mode** near the bottom). The
       Resources page is hidden without it.
@@ -93,34 +99,20 @@ either, which is worth knowing before you rely on it.
       Order matters here: the card checks for `window.mpegts` when it loads and
       won't work if it loads first. Resources load in the order they're listed on
       this page, so `mpegts.js` needs to be added, and appear, above the card.
-   4. Hard-refresh your browser (Cmd/Ctrl+Shift+R) to clear any cached copy.
-
-   If you update the card later, your browser may keep serving a stale cached copy.
-   Appending a version marker to the URL (e.g. `...card.js?v=2`) after an update
-   forces a fresh fetch.
 
 ### Manual
 
 1. Copy `custom_components/reolink_hub_playback_bridge/` into your HA config's
    `custom_components/` directory.
 2. Copy `www/reolink-hub-playback-bridge/` into your HA config's `www/` directory.
-3. Add both JS files (`mpegts.js` first) as Lovelace resources, following step 5
-   above.
-4. Restart Home Assistant.
+3. Restart Home Assistant, then follow step 5 above to enable the integration
+   (and register the Lovelace resources, automatically or by hand per step 6).
 
 ## Configuration
 
-HACS only places the files, it doesn't touch `configuration.yaml`. After installing
-(either method above), add one line yourself:
-
-```yaml
-reolink_hub_playback_bridge:
-```
-
-This integration doesn't have a config flow yet, so it can't be set up through
-**Settings → Devices & Services**, YAML is the only way to enable it for now.
-Restart Home Assistant after adding it. Everything else (which cameras, which
-entities) lives on the card's own config, not here.
+Enable the integration via **Settings → Devices & Services → Add Integration →
+Reolink Hub Playback Bridge**, then press Submit - see step 5 above. Everything
+else (which cameras, which entities) lives on the card's own config, not here.
 
 Every camera's config can be filled in automatically: open the card's visual editor and
 pick the device, and a WebSocket call resolves the rest (media source IDs, PTZ entities,

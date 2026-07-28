@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Reolink Hub Playback Bridge",
+        "description": "Enable the Reolink Hub Playback Bridge streaming proxy and media browsing. It reuses your already-configured Reolink integration's credentials — no separate login needed. Press Submit to enable."
+      }
+    }
+  },
+  "issues": {
+    "deprecated_yaml": {
+      "title": "[%key:component::homeassistant::issues::deprecated_yaml::title%]",
+      "description": "[%key:component::homeassistant::issues::deprecated_yaml::description%]"
+    }
+  }
+}
