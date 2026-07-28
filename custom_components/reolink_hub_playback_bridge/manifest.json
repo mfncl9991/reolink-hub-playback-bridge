@@ -1,11 +1,11 @@
 {
   "domain": "reolink_hub_playback_bridge",
   "name": "Reolink Hub Playback Bridge",
-  "version": "1.0.0",
-  "documentation": "https://github.com/mfncl9991/reolink-hub-playback-bridge",
-  "issue_tracker": "https://github.com/mfncl9991/reolink-hub-playback-bridge/issues",
-  "dependencies": ["reolink", "stream", "camera", "http"],
   "codeowners": ["@mfncl9991"],
+  "dependencies": ["reolink", "stream", "camera", "http"],
+  "documentation": "https://github.com/mfncl9991/reolink-hub-playback-bridge",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/mfncl9991/reolink-hub-playback-bridge/issues",
   "requirements": [],
-  "iot_class": "local_polling"
+  "version": "1.0.0"
 }
