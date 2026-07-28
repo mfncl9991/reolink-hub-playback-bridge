@@ -3,7 +3,7 @@
 A custom Home Assistant integration and Lovelace card for Reolink **Home Hub / NVR**
 owners whose recorded-clip playback is unusably slow. It swaps the CGI command Home
 Assistant uses to fetch clips for the one Reolink's own app already uses, and ships a
-player that can actually decode what comes back.
+player that decodes what comes back.
 
 ## Why?
 
@@ -50,6 +50,16 @@ somewhere, which is why it's a standalone project instead.
   reuses that integration's existing authenticated connection rather than storing its
   own credentials.
 - A browser with MediaSource Extensions support (all current major browsers qualify).
+
+## A note on scope
+
+A caution before you install this: it was built with heavy AI assistance and tested
+against exactly one setup, a single Reolink Home Hub with four cameras (a Video
+Doorbell, an E1 Zoom, and two Argus PT Ultra units). It hasn't been tested against any
+other hub, NVR, or camera combination, and it isn't maintained with other setups in
+mind. It's here for anyone who wants to try it or fork it for their own hardware,
+though. The code hasn't been audited line by line against `reolink_aio`'s internals
+either, which is worth knowing before you rely on it.
 
 ## Screenshots
 
@@ -144,15 +154,6 @@ and so on) for you.
   against could still slip through.
 - Seeking beyond what's already buffered may not work mid-clip, since the Home Hub
   doesn't support HTTP Range requests.
-
-## A note on scope
-
-This was built and tested against one Reolink Home Hub and four cameras: a Video
-Doorbell, an E1 Zoom, and two Argus PT Ultra units. It hasn't been tested against any
-other hub, NVR, or camera combination, and it isn't maintained with other setups in
-mind. It's here for anyone who wants to try it or fork it for their own hardware, though.
-The code was also written with heavy AI assistance and hasn't been audited line by line
-against `reolink_aio`'s internals, which is worth knowing before you rely on it.
 
 ## License
 
