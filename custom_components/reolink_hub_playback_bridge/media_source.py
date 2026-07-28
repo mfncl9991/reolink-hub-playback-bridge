@@ -13,9 +13,6 @@ import logging
 from typing import override
 from urllib.parse import quote
 
-from reolink_aio.api import DUAL_LENS_MODELS
-from reolink_aio.typings import VOD_trigger
-
 from homeassistant.components.camera import DOMAIN as CAM_DOMAIN
 from homeassistant.components.media_player import MediaClass, MediaType
 from homeassistant.components.media_source import (
@@ -28,7 +25,10 @@ from homeassistant.components.media_source import (
 from homeassistant.components.reolink.const import DOMAIN as REOLINK_DOMAIN
 from homeassistant.components.reolink.util import get_host
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from reolink_aio.api import DUAL_LENS_MODELS
+from reolink_aio.typings import VOD_trigger
 
 from .const import DOMAIN
 

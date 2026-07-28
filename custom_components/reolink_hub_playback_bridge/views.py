@@ -28,7 +28,6 @@ import logging
 from urllib.parse import unquote
 
 from aiohttp import ClientPayloadError, web
-
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.components.reolink.util import get_host
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -111,11 +110,7 @@ class ReolinkHubPlaybackBridgeLiveStreamView(HomeAssistantView):
             async for chunk in upstream.content.iter_chunked(65536):
                 await response.write(chunk)
         except (ClientPayloadError, ConnectionError, OSError) as err:
-            _LOGGER.debug(
-                "reolink_hub_playback_bridge: upstream live stream for channel %s ended: %s",
-                channel,
-                err,
-            )
+            _LOGGER.debug("upstream live stream for channel %s ended: %s", channel, err)
         finally:
             upstream.close()
         await response.write_eof()
@@ -125,7 +120,10 @@ class ReolinkHubPlaybackBridgeLiveStreamView(HomeAssistantView):
 class ReolinkHubPlaybackBridgeStreamView(HomeAssistantView):
     """Proxy a Reolink Playback VOD stream from the same origin as the frontend."""
 
-    url = "/api/reolink_hub_playback_bridge/stream/{config_entry_id}/{channel}/{stream_res}/{seek}/{filename:.+}"
+    url = (
+        "/api/reolink_hub_playback_bridge/stream/{config_entry_id}/{channel}/"
+        "{stream_res}/{seek}/{filename:.+}"
+    )
     name = f"api:{DOMAIN}:stream"
     requires_auth = True
 
@@ -196,9 +194,7 @@ class ReolinkHubPlaybackBridgeStreamView(HomeAssistantView):
             # End the response cleanly instead so the browser sees a normal
             # (if short) stream completion.
             _LOGGER.debug(
-                "reolink_hub_playback_bridge: upstream stream for %s ended early: %s",
-                decoded_filename,
-                err,
+                "upstream stream for %s ended early: %s", decoded_filename, err
             )
         finally:
             upstream.close()

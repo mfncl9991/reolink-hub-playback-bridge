@@ -9,7 +9,6 @@ guesswork, which is why this lives here rather than in the card's JS.
 """
 
 import voluptuous as vol
-
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er

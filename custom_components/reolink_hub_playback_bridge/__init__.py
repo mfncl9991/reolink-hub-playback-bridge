@@ -20,6 +20,7 @@ No separate credentials: reuses the already-authenticated `host.api` object the 
 """
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
 from .views import (
@@ -29,6 +30,8 @@ from .views import (
 from .websocket import async_register as async_register_websocket_commands
 
 __all__ = ["DOMAIN"]
+
+CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
