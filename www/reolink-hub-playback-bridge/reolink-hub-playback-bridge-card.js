@@ -44,17 +44,17 @@
  * entity's `options` attribute rather than hardcoded, so the pill list
  * follows whatever's actually configured on the camera. Opening the pad also
  * floors that camera's PIR sensitivity for as long as it's open
- * (_ptzSuppressPirStart/_ptzSuppressPirEnd), the same technique a
- * notification-snooze automation might use to suppress a motion alert while
- * you're panning - card-initiated pans only, since the reolink integration
- * gives HA no reliable way to detect a pan made directly in the Reolink app.
- * Since that restore only runs from client-side JS (button click, closing
- * live view, or disconnectedCallback), a killed tab/backgrounded app/dropped
- * network mid-pan can skip all of them and leave PIR floored indefinitely
- * (confirmed 2026-07-28 - Driveway stuck at PIR=1 for 19+ hours). Both
- * methods also start/cancel timer.<slug>_pir_pan_safety as a server-side
- * backstop - see that timer's comment in configuration.yaml and
- * reolink_pir_pan_safety_expired in security.yaml.
+ * (_ptzSuppressPirStart/_ptzSuppressPirEnd) - card-initiated pans only,
+ * since the reolink integration gives HA no reliable way to detect a pan
+ * made directly in the Reolink app. The save/floor/restore itself is backend
+ * (camera_actions.py) state now, not this card's - these two methods are
+ * thin websocket calls telling the backend which entities to use and when
+ * to start/end suppression, and the backend schedules its own bounded
+ * restore regardless of what happens to this browser tab afterward. That
+ * used to be a real gap when the restore only ran from client-side JS
+ * lifecycle callbacks: a killed tab/backgrounded app/dropped network mid-pan
+ * skipped all of them and left PIR floored indefinitely (confirmed
+ * 2026-07-28 - Driveway stuck at PIR=1 for 19+ hours).
  */
 
 // Cheap, cached at module scope since MediaSource support doesn't change
@@ -1461,42 +1461,54 @@ class ReolinkHubPlaybackBridgeCard extends HTMLElement {
 
   // Reflects switch.<location>_manual_record's actual state rather than
   // tracking a local "is recording" flag, so the button stays correct
-  // regardless of which client started the recording (or if the companion
-  // timer.finished automation - reolink_manual_record_expired in
-  // security.yaml - already turned it back off). Deliberately never
-  // disabled (unlike most other pills here) - clicking again while
-  // recording is the stop action, handled by _recordClip below.
+  // regardless of which client started the recording (or if the backend's
+  // own auto-stop schedule - see _recordClip - already turned it back off).
+  // Deliberately never disabled (unlike most other pills here) - clicking
+  // again while recording is the stop action, handled by _recordClip below.
   _updateRecordBtn() {
     const entityId = this._config.record_switch_entity;
     const state = this._hass.states[entityId];
     const recording = state ? state.state === "on" : false;
     this._recordBtn.classList.toggle("recording", recording);
-    this._recordBtn.title = recording ? "Recording - tap to stop" : "Record 5 minutes";
+    const minutes = this._config.record_auto_stop_minutes ?? 5;
+    const notRecordingTitle =
+      minutes > 0 ? `Record ${minutes} min` : "Record (no auto-stop)";
+    this._recordBtn.title = recording ? "Recording - tap to stop" : notRecordingTitle;
   }
 
   // Toggles the Home Hub's own manual-record switch rather than recording via
   // HA's camera.record service - the Home Hub already has its own storage
   // and recording pipeline, so there's nothing for HA to proxy here beyond
-  // flipping the switch. Starting sets a fixed 5-minute timer
-  // (reolink_manual_record_expired in security.yaml turns the switch back
-  // off on timer.finished, so this works even if the dashboard is closed
-  // before the window ends); clicking again while already recording stops
-  // it immediately instead of waiting out the timer.
+  // flipping the switch. Starting schedules a backend auto-stop for
+  // record_auto_stop_minutes (default 5; "Off"/0 skips scheduling entirely,
+  // so the switch just stays on until stopped by hand) - the backend owns
+  // the timeout (see camera_actions.py), so this works even if the
+  // dashboard is closed before the window ends. Clicking again while already
+  // recording stops it immediately instead of waiting out the schedule; this
+  // path doesn't change based on record_auto_stop_minutes since it always
+  // turns the switch off directly regardless of whether a timeout is
+  // pending (the cancel call below is a no-op if none is).
   async _recordClip() {
     const entityId = this._config.record_switch_entity;
     if (!entityId) return;
-    const timerEntityId = `timer.${entityId.split(".")[1]}`;
     const recording = this._hass.states[entityId]?.state === "on";
     try {
       if (recording) {
         await this._hass.callService("switch", "turn_off", { entity_id: entityId });
-        await this._hass.callService("timer", "cancel", { entity_id: timerEntityId });
-      } else {
-        await this._hass.callService("switch", "turn_on", { entity_id: entityId });
-        await this._hass.callService("timer", "start", {
-          entity_id: timerEntityId,
-          duration: "00:05:00",
+        await this._hass.callWS({
+          type: "reolink_hub_playback_bridge/manual_record_cancel_stop",
+          entity_id: entityId,
         });
+      } else {
+        const minutes = this._config.record_auto_stop_minutes ?? 5;
+        await this._hass.callService("switch", "turn_on", { entity_id: entityId });
+        if (minutes > 0) {
+          await this._hass.callWS({
+            type: "reolink_hub_playback_bridge/manual_record_schedule_stop",
+            entity_id: entityId,
+            minutes,
+          });
+        }
       }
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -1530,80 +1542,62 @@ class ReolinkHubPlaybackBridgeCard extends HTMLElement {
   }
 
   // Derives the location slug from the configured "button.<slug>_ptz" prefix
-  // (e.g. "button.patio_ptz" -> "patio") - reuses whatever PIR/snooze
-  // entities a notification-action camera_snooze automation already
-  // maintains for that slug (number.<slug>_pir_sensitivity,
-  // input_number.<slug>_pir_sensitivity_saved, timer.<slug>_camera_snooze)
-  // rather than adding new config keys for this.
+  // (e.g. "button.patio_ptz" -> "patio") - used to build the two entity IDs
+  // passed to the backend below: number.<slug>_pir_sensitivity (this
+  // integration's own PIR entity) and timer.<slug>_camera_snooze (owned
+  // entirely by a separate, optional notification-action snooze automation,
+  // only ever read - see camera_actions.py) - rather than adding new config
+  // keys for either.
   _ptzPirLocationSlug() {
     const match = (this._config.ptz_pad_entity_prefix || "").match(/^button\.(.+)_ptz$/);
     return match ? match[1] : null;
   }
 
-  // Floors PIR sensitivity for as long as the pad is open, the same way the
-  // notification-action camera_snooze already does - see _ptzSuppressPirEnd
-  // for the restore side. This only covers pans made through this card.
-  // There's no reliable way to also catch a pan made directly in the Reolink
-  // app: this integration's sensor.<slug>_ptz_pan/tilt_position entities
-  // only update when the connection re-establishes (confirmed via a week of
-  // history showing the value frozen except right after reconnects), not
-  // live during normal panning, so an automation keyed off them never
-  // actually fires in practice - tried and reverted rather than shipping a
-  // design that silently does nothing (see git history).
+  // Floors PIR sensitivity for as long as the pad is open. The backend
+  // (camera_actions.py) owns the save/floor/timeout/restore now - this just
+  // tells it which entities to use and lets it do the state mutation, so
+  // the floor survives regardless of what happens to this browser tab
+  // afterward (see _ptzSuppressPirEnd and the class doc comment). This only
+  // covers pans made through this card. There's no reliable way to also
+  // catch a pan made directly in the Reolink app: this integration's
+  // sensor.<slug>_ptz_pan/tilt_position entities only update when the
+  // connection re-establishes (confirmed via a week of history showing the
+  // value frozen except right after reconnects), not live during normal
+  // panning, so an automation keyed off them never actually fires in
+  // practice - tried and reverted rather than shipping a design that
+  // silently does nothing (see git history).
   //
-  // Skips entirely - no save, no floor - if a real notification-action
-  // snooze is already active for this camera, so opening the pad during an
-  // existing (longer) snooze can't stomp its saved-PIR value with the
-  // already-floored one (the same class of bug reolink_snooze_camera's own
-  // re-press guard fixes).
+  // Still guards client-side on "does a PIR entity even exist for this
+  // camera" (cheap, avoids a round trip for cameras with no PIR sensor).
+  // The "is a real notification-action snooze already active" guard moved
+  // server-side along with the state mutation itself - see camera_actions.py
+  // - since the backend is now the one deciding whether to floor at all.
   async _ptzSuppressPirStart() {
     const slug = this._ptzPirLocationSlug();
     if (!slug) return;
     const pirEntity = `number.${slug}_pir_sensitivity`;
-    const pirState = this._hass.states[pirEntity];
-    if (!pirState) return; // not every camera has a PIR sensitivity entity
-    if (this._hass.states[`timer.${slug}_camera_snooze`]?.state === "active") return;
-    await this._hass.callService("input_number", "set_value", {
-      entity_id: `input_number.${slug}_pir_sensitivity_saved`,
-      value: Number(pirState.state),
+    if (!this._hass.states[pirEntity]) return; // not every camera has a PIR sensitivity entity
+    await this._hass.callWS({
+      type: "reolink_hub_playback_bridge/ptz_pir_suppress_start",
+      pir_entity_id: pirEntity,
+      snooze_timer_entity_id: `timer.${slug}_camera_snooze`,
     });
-    await this._hass.callService("number", "set_value", {
-      entity_id: pirEntity,
-      value: pirState.attributes.min ?? 1,
-    });
-    // Server-side backstop - see class doc comment and the timer's own
-    // comment in configuration.yaml. Started (and restarted, if somehow
-    // still running from a prior session that never cleaned up) every time
-    // the pad opens, so the floor can never outlive this timer even if the
-    // client-side restore below never gets a chance to run.
-    const safetyTimer = `timer.${slug}_pir_pan_safety`;
-    if (this._hass.states[safetyTimer]) {
-      await this._hass.callService("timer", "start", { entity_id: safetyTimer });
-    }
   }
 
-  // Restores PIR sensitivity when the pad closes, unless a real
-  // notification-action snooze is active by then - that snooze's own expiry
-  // handles restoration at the right time instead, so closing the pad
-  // mid-snooze can't cut it short.
+  // Restores PIR sensitivity when the pad closes - same backend-owned
+  // mutation as _ptzSuppressPirStart, this just tells it to end. The
+  // backend re-checks whether a real notification-action snooze has since
+  // become active before actually restoring, so closing the pad mid-snooze
+  // can't cut that snooze short.
   async _ptzSuppressPirEnd() {
     const slug = this._ptzPirLocationSlug();
     if (!slug) return;
     const pirEntity = `number.${slug}_pir_sensitivity`;
     if (!this._hass.states[pirEntity]) return;
-    if (this._hass.states[`timer.${slug}_camera_snooze`]?.state === "active") return;
-    const saved = this._hass.states[`input_number.${slug}_pir_sensitivity_saved`];
-    if (!saved) return;
-    await this._hass.callService("number", "set_value", {
-      entity_id: pirEntity,
-      value: Number(saved.state),
+    await this._hass.callWS({
+      type: "reolink_hub_playback_bridge/ptz_pir_suppress_end",
+      pir_entity_id: pirEntity,
     });
-    // Clean close - cancel the safety-net backstop started in
-    // _ptzSuppressPirStart so it doesn't fire a redundant restore later.
-    const safetyTimer = `timer.${slug}_pir_pan_safety`;
-    if (this._hass.states[safetyTimer]) {
-      await this._hass.callService("timer", "cancel", { entity_id: safetyTimer });
-    }
   }
 
   // Originally called reolink.ptz_move (its target selector requires the
@@ -2142,6 +2136,7 @@ const FIELD_LABELS = {
   media_source_id: "Media source ID",
   live_camera_entity: "Live camera entity",
   record_switch_entity: "Record switch entity",
+  record_auto_stop_minutes: "Manual-record auto-stop",
   battery_entity: "Battery entity",
   hq_available: "Enable 4K (Clear)",
   hq_default: "Default to 4K",
@@ -2154,6 +2149,8 @@ const FIELD_LABELS = {
 const FIELD_HELPERS = {
   media_source_id:
     "media-source://reolink_hub_playback_bridge/RES|<hub_entry_id>|<channel>|<sub|main> - auto-filled by the camera picker above. The quality suffix here no longer affects behavior; hq_available/hq_default below control the actual default.",
+  record_auto_stop_minutes:
+    'Recording stops itself after this long if you don\'t tap the button again. "Off" means it only stops when you tap it. Defaults to 5 minutes if left unset.',
   hq_available:
     "Shows the HQ pill in both live and recorded view. Leave off for cameras where 4K decode has been unreliable.",
   hq_default:
@@ -2161,6 +2158,16 @@ const FIELD_HELPERS = {
   ptz_pad_entity_prefix:
     "A prefix, not a full entity ID - the card appends _up/_down/_left/_right etc. itself.",
 };
+
+const RECORD_AUTO_STOP_OPTIONS = [
+  { value: 0, label: "Off (no auto-stop)" },
+  { value: 1, label: "1 minute" },
+  { value: 5, label: "5 minutes (default)" },
+  { value: 10, label: "10 minutes" },
+  { value: 15, label: "15 minutes" },
+  { value: 30, label: "30 minutes" },
+  { value: 60, label: "60 minutes" },
+];
 
 class ReolinkHubPlaybackBridgeCardEditor extends HTMLElement {
   setConfig(config) {
@@ -2272,6 +2279,10 @@ class ReolinkHubPlaybackBridgeCardEditor extends HTMLElement {
         { name: "media_source_id", required: true, selector: { text: {} } },
         { name: "live_camera_entity", selector: { entity: { domain: "camera" } } },
         { name: "record_switch_entity", selector: { entity: { domain: "switch" } } },
+        {
+          name: "record_auto_stop_minutes",
+          selector: { select: { mode: "dropdown", options: RECORD_AUTO_STOP_OPTIONS } },
+        },
         { name: "battery_entity", selector: { entity: { domain: "sensor" } } },
         ...PTZ_SCHEMA,
       ],

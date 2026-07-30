@@ -28,6 +28,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
 
+from .camera_actions import RuntimeData
 from .const import DOMAIN, TITLE
 from .frontend_resources import async_register_lovelace_resources
 from .views import (
@@ -41,6 +42,8 @@ __all__ = ["DOMAIN"]
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 _VIEWS_REGISTERED_KEY = f"{DOMAIN}_views_registered"
+
+type ReolinkHubPlaybackBridgeConfigEntry = ConfigEntry[RuntimeData]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -70,12 +73,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ReolinkHubPlaybackBridgeConfigEntry
+) -> bool:
     """Set up reolink_hub_playback_bridge from a config entry.
 
-    Registers the two proxy HTTP views and the websocket command exactly once
-    per HA run, regardless of how many times the (single) config entry is
-    reloaded - hass.http.register_view() isn't safe to call twice.
+    Registers the two proxy HTTP views and the websocket commands exactly
+    once per HA run, regardless of how many times the (single) config entry
+    is reloaded - hass.http.register_view() isn't safe to call twice.
+
+    entry.runtime_data holds the in-memory PTZ-pad PIR-suppress and
+    manual-record auto-stop state (see camera_actions.py) - unlike the
+    views/websocket commands above, this genuinely is per-entry-instance:
+    async_unload_entry cancels every pending scheduled callback in it below.
     """
     if not hass.data.get(_VIEWS_REGISTERED_KEY):
         hass.http.register_view(ReolinkHubPlaybackBridgeStreamView())
@@ -83,18 +93,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async_register_websocket_commands(hass)
         hass.data[_VIEWS_REGISTERED_KEY] = True
 
+    entry.runtime_data = RuntimeData()
+
     await async_register_lovelace_resources(hass)
 
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, entry: ReolinkHubPlaybackBridgeConfigEntry
+) -> bool:
     """Unload a config entry.
 
-    There is nothing to tear down: the views/websocket command are
-    process-wide singletons with no per-entry state, and HA's HTTP layer has
-    no clean route-removal API. Leaving them registered after an unload is
-    harmless - every request still requires a *reolink* config_entry_id in
-    the URL/media-source path, which this entry never supplies.
+    The views/websocket commands are process-wide singletons with no
+    per-entry state, and HA's HTTP layer has no clean route-removal API, so
+    leaving them registered after an unload is harmless - every request
+    still requires a *reolink* config_entry_id in the URL/media-source path,
+    which this entry never supplies. entry.runtime_data's pending
+    async_call_later callbacks are genuinely per-entry, though, and must be
+    cancelled here - otherwise a reload leaves orphaned callbacks holding
+    closures over a now-stale runtime_data.
     """
+    entry.runtime_data.cancel_all()
     return True
