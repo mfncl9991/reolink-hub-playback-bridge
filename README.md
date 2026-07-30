@@ -134,6 +134,98 @@ and so on) for you.
 | `calendar_trigger_highlighting` | No | Set to `false` to skip fetching per-day AI-trigger summaries for the calendar popup. Defaults to on. |
 | `cross_origin_host` | No | Routes VOD/live stream requests through a second origin pointed at the same backend. Only needed if you hit a Home Assistant frontend Service Worker bug that intermittently corrupts large chunked-transfer fetches; most setups won't need this. |
 
+## Optional: automation-backed features
+
+Two card features only do half the job on their own: they set an entity and expect
+something else in *your own* config to put it back. The integration's config flow
+doesn't create any of this for you. Skip it and the buttons still work, just check
+the per-entity notes below for how each one behaves without its helper.
+
+### PTZ pad: suppress PIR while panning
+
+Opening the Move pad (`ptz_pad_entity_prefix`) floors that camera's PIR sensitivity
+for as long as the pad stays open, then restores it on close. Physically panning
+trips PIR/motion detection the same way real motion would, so without this, panning
+to look around sets off a false motion alert every time. For each `<slug>` you
+configure a pad for (e.g. `button.driveway_ptz_up` implies slug `driveway`):
+
+| Entity | Required? | What happens if it's missing |
+|---|---|---|
+| `number.<slug>_pir_sensitivity` | Created by the built-in `reolink` integration | Pad opens fine; PIR is just never suppressed. |
+| `input_number.<slug>_pir_sensitivity_saved` | **Yes** | **Not a graceful no-op.** If the PIR entity above exists but this doesn't, opening the pad throws a console error and PIR is never floored. |
+| `timer.<slug>_pir_pan_safety` | Recommended | Silently skipped if absent (no error) - but then nothing restores PIR if your browser tab or app dies mid-pan (network drop, backgrounded app, crash). The card starts/cancels this timer on pad open/close; a companion automation (below) has to do the actual restoring when it fires. |
+| `timer.<slug>_camera_snooze` | Optional | Only ever read, never created or started by this feature. If you separately run a "snooze notifications" automation that owns a timer by this name, opening the pad won't stomp on it. Fine to leave undefined otherwise. |
+
+Helper YAML for one camera (repeat per `<slug>`):
+
+```yaml
+input_number:
+  driveway_pir_sensitivity_saved:
+    name: "Driveway PIR Sensitivity Saved"
+    min: 0
+    max: 100
+    step: 1
+    mode: box
+
+timer:
+  driveway_pir_pan_safety:
+    name: "Driveway PIR Pan Safety"
+    duration: "00:05:00"
+    restore: false
+```
+
+Automation to make the safety-net timer actually restore PIR when it fires:
+
+```yaml
+automation:
+  - alias: "Reolink - PIR Pan Safety Expired - Driveway"
+    triggers:
+      - trigger: event
+        event_type: timer.finished
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.event.data.entity_id == 'timer.driveway_pir_pan_safety' }}
+    actions:
+      - action: number.set_value
+        target:
+          entity_id: number.driveway_pir_sensitivity
+        data:
+          value: "{{ states('input_number.driveway_pir_sensitivity_saved') | float(100) }}"
+```
+
+### Manual-record button auto-stop
+
+`record_switch_entity` toggles a switch on/off; the card also starts a fixed
+5-minute timer named after the switch's object_id, so a recording stops itself even
+if you close the dashboard before tapping it off - but only once that timer entity
+and a restore automation exist. For `record_switch_entity: switch.driveway_manual_record`:
+
+```yaml
+timer:
+  driveway_manual_record:
+    name: "Driveway Manual Record"
+    duration: "00:05:00"
+    restore: false
+
+automation:
+  - alias: "Reolink - Manual Record Expired - Driveway"
+    triggers:
+      - trigger: event
+        event_type: timer.finished
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.event.data.entity_id == 'timer.driveway_manual_record' }}
+    actions:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.driveway_manual_record
+```
+
+Without this, the record button still starts/stops the switch on click - it just
+never auto-stops after 5 minutes on its own if you forget to tap it again.
+
 ## Known limitations
 
 - High-resolution ("Clear"/4K/HEVC) playback can be inconsistent. It plays reliably on

@@ -48,6 +48,13 @@
  * notification-snooze automation might use to suppress a motion alert while
  * you're panning - card-initiated pans only, since the reolink integration
  * gives HA no reliable way to detect a pan made directly in the Reolink app.
+ * Since that restore only runs from client-side JS (button click, closing
+ * live view, or disconnectedCallback), a killed tab/backgrounded app/dropped
+ * network mid-pan can skip all of them and leave PIR floored indefinitely
+ * (confirmed 2026-07-28 - Driveway stuck at PIR=1 for 19+ hours). Both
+ * methods also start/cancel timer.<slug>_pir_pan_safety as a server-side
+ * backstop - see that timer's comment in configuration.yaml and
+ * reolink_pir_pan_safety_expired in security.yaml.
  */
 
 // Cheap, cached at module scope since MediaSource support doesn't change
@@ -1564,6 +1571,15 @@ class ReolinkHubPlaybackBridgeCard extends HTMLElement {
       entity_id: pirEntity,
       value: pirState.attributes.min ?? 1,
     });
+    // Server-side backstop - see class doc comment and the timer's own
+    // comment in configuration.yaml. Started (and restarted, if somehow
+    // still running from a prior session that never cleaned up) every time
+    // the pad opens, so the floor can never outlive this timer even if the
+    // client-side restore below never gets a chance to run.
+    const safetyTimer = `timer.${slug}_pir_pan_safety`;
+    if (this._hass.states[safetyTimer]) {
+      await this._hass.callService("timer", "start", { entity_id: safetyTimer });
+    }
   }
 
   // Restores PIR sensitivity when the pad closes, unless a real
@@ -1582,6 +1598,12 @@ class ReolinkHubPlaybackBridgeCard extends HTMLElement {
       entity_id: pirEntity,
       value: Number(saved.state),
     });
+    // Clean close - cancel the safety-net backstop started in
+    // _ptzSuppressPirStart so it doesn't fire a redundant restore later.
+    const safetyTimer = `timer.${slug}_pir_pan_safety`;
+    if (this._hass.states[safetyTimer]) {
+      await this._hass.callService("timer", "cancel", { entity_id: safetyTimer });
+    }
   }
 
   // Originally called reolink.ptz_move (its target selector requires the
