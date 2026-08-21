@@ -40,6 +40,9 @@ somewhere, which is why it's a standalone project instead.
   full-resolution main stream and the always-playable sub stream
 - Optional PTZ controls (pan/tilt/zoom, presets) for cameras that support them
 - Optional manual-record button, wired to whatever switch/timer entity you set up
+- A `switch.reolink_hub_playback_bridge_force_live_view` entity the integration
+  creates for you, so an automation can jump a card straight into live view
+  (e.g. on a security alert) with no helper entity to set up first
 
 ## Requirements
 
@@ -134,6 +137,18 @@ and so on) for you.
 | `hq_default` | No | Whether high resolution is the opening quality when `hq_available` is set. |
 | `calendar_trigger_highlighting` | No | Set to `false` to skip fetching per-day AI-trigger summaries for the calendar popup. Defaults to on. |
 | `cross_origin_host` | No | Routes VOD/live stream requests through a second origin pointed at the same backend. Only needed if you hit a Home Assistant frontend Service Worker bug that intermittently corrupts large chunked-transfer fetches; most setups won't need this. |
+| `live_trigger_entity` | No | Any entity whose state going `on` forces this card into live view - typically `switch.reolink_hub_playback_bridge_force_live_view` (see below), flipped on by your own automation. Edge-triggered: only an `off`/`unavailable` → `on` transition acts, and only while this card is actually on screen, so it won't fight a user who's already browsing recordings or re-toggle every state update. |
+
+## Force Live View switch
+
+The integration creates one `switch.reolink_hub_playback_bridge_force_live_view`
+entity automatically - nothing to configure, no helper entity to create by hand.
+Wire it into an automation (turn it on when you want to interrupt whatever's on
+screen with a live feed, e.g. a security alert; turn it back off after) and set
+`live_trigger_entity` to it on whichever card(s) you want to react. It's a single
+switch shared by every card, not one per camera: only the card actually visible
+when it turns on responds, so which camera "wins" is just whichever dashboard
+view your own automation navigated to first.
 
 ## PTZ pad PIR suppression and manual-record auto-stop
 

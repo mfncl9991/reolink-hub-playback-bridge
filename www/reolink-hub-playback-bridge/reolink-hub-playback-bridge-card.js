@@ -165,6 +165,24 @@ class ReolinkHubPlaybackBridgeCard extends HTMLElement {
     if (this._config.record_switch_entity) this._updateRecordBtn();
     if (this._config.battery_entity) this._updateBatteryBadge();
     if (this._config.ptz_preset_entity) this._updatePtzPresetUi();
+    if (this._config.live_trigger_entity) this._checkLiveTrigger();
+  }
+
+  // Lets an external switch (e.g. an alert automation) force this card into
+  // live view without waiting for a tap on the LIVE pill - see
+  // live_trigger_entity in the README. Edge-triggered on off/unavailable ->
+  // on, not level-triggered: _toggleLive() is a plain toggle, so reacting to
+  // every "on" reading would flip live view back off again on the very next
+  // hass update. Also gated on this._wasVisible (set by _syncVisibility,
+  // called just above) so a same-dashboard card that isn't the one currently
+  // on screen doesn't start a live stream nobody's looking at.
+  _checkLiveTrigger() {
+    const state = this._hass.states[this._config.live_trigger_entity]?.state;
+    const wasOn = this._lastLiveTriggerState === "on";
+    this._lastLiveTriggerState = state;
+    if (state === "on" && !wasOn && this._wasVisible && !this._liveActive) {
+      this._toggleLive();
+    }
   }
 
   getCardSize() {

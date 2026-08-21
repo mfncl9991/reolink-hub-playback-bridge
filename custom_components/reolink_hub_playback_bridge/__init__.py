@@ -22,6 +22,7 @@ No separate credentials: reuses the already-authenticated `host.api` object the 
 from __future__ import annotations
 
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
@@ -40,6 +41,8 @@ from .websocket import async_register as async_register_websocket_commands
 __all__ = ["DOMAIN"]
 
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
+
+PLATFORMS = [Platform.SWITCH]
 
 _VIEWS_REGISTERED_KEY = f"{DOMAIN}_views_registered"
 
@@ -96,6 +99,7 @@ async def async_setup_entry(
     entry.runtime_data = RuntimeData()
 
     await async_register_lovelace_resources(hass)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
 
@@ -114,5 +118,6 @@ async def async_unload_entry(
     cancelled here - otherwise a reload leaves orphaned callbacks holding
     closures over a now-stale runtime_data.
     """
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     entry.runtime_data.cancel_all()
-    return True
+    return unloaded
