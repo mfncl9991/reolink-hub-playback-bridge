@@ -57,6 +57,13 @@
  * 2026-07-28 - Driveway stuck at PIR=1 for 19+ hours).
  */
 
+// A live FLV stream has no natural end, so any mpegts ERROR (a Home Hub
+// concurrent-session limit, a brief network hiccup, etc) is a real failure
+// worth recovering from automatically rather than leaving the video frozen
+// on its last decoded frame - see _scheduleLiveRetry.
+const LIVE_RETRY_LIMIT = 3;
+const LIVE_RETRY_BASE_DELAY_MS = 1000;
+
 // Cheap, cached at module scope since MediaSource support doesn't change
 // within a session - re-running isTypeSupported() per live-view open would
 // be pointless work repeated on every quality toggle.
@@ -1405,7 +1412,7 @@ class ReolinkHubPlaybackBridgeCard extends HTMLElement {
     return this._rewriteToCrossOrigin(signedPath);
   }
 
-  async _playLiveFlv(streamRes) {
+  async _playLiveFlv(streamRes, retryCount = 0) {
     this._destroyLivePlayer();
     // Generation counter guards against a race if _playLiveFlv is called
     // again (quality toggle, live toggled off and back on) while the
@@ -1429,11 +1436,20 @@ class ReolinkHubPlaybackBridgeCard extends HTMLElement {
     // streams have no natural end, so (unlike VOD) every ERROR here is a real
     // failure - most commonly the "main" stream being HEVC on a browser whose
     // MediaSource doesn't accept hvc1/hev1 (see hevcMseSupported above).
+    //
+    // Confirmed 2026-08-21 on a real security alert: a live session can die
+    // a few seconds in (Home Hub concurrent-session limits, a network blip,
+    // etc), and previously this just called _destroyLivePlayer() and stopped
+    // - the <video> element silently froze on its last frame with the LIVE
+    // pill still showing active, no indication anything had gone wrong.
+    // _scheduleLiveRetry recovers automatically instead, up to
+    // LIVE_RETRY_LIMIT attempts, before giving up visibly.
     player.on(window.mpegts.Events.ERROR, (type, detail, info) => {
       if (this._livePlayer !== player) return;
       // eslint-disable-next-line no-console
       console.error("reolink-hub-playback-bridge-card: live playback error", type, detail, info);
       this._destroyLivePlayer();
+      this._scheduleLiveRetry(streamRes, this._liveGen, retryCount);
     });
     player.attachMediaElement(this._liveVideo);
     player.load();
@@ -1441,6 +1457,27 @@ class ReolinkHubPlaybackBridgeCard extends HTMLElement {
     player.play().catch(() => {
       /* autoplay may be blocked - user can press play manually */
     });
+  }
+
+  // attemptGen is this._liveGen as of right after the failed attempt's
+  // _destroyLivePlayer() call (i.e. the generation nothing has superseded
+  // yet). Re-checked against the *current* this._liveGen both before giving
+  // up and right before each retry fires - not just once at schedule time -
+  // so a user closing live view, reopening it, or toggling quality during
+  // the backoff window cancels the stale retry instead of resurrecting a
+  // stream nobody asked for anymore.
+  _scheduleLiveRetry(streamRes, attemptGen, retryCount) {
+    if (!this._liveActive || attemptGen !== this._liveGen) return;
+    if (retryCount >= LIVE_RETRY_LIMIT) {
+      this._liveVideo.hidden = true;
+      this._liveMount.hidden = false;
+      this._liveMount.innerHTML = '<div class="empty">Live view unavailable.</div>';
+      return;
+    }
+    setTimeout(() => {
+      if (!this._liveActive || attemptGen !== this._liveGen) return;
+      this._playLiveFlv(streamRes, retryCount + 1);
+    }, LIVE_RETRY_BASE_DELAY_MS * (retryCount + 1));
   }
 
   _destroyLivePlayer() {
