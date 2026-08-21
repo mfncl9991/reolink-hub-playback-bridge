@@ -183,13 +183,30 @@ class ReolinkHubPlaybackBridgeCard extends HTMLElement {
   // hass update. Also gated on this._wasVisible (set by _syncVisibility,
   // called just above) so a same-dashboard card that isn't the one currently
   // on screen doesn't start a live stream nobody's looking at.
+  //
+  // this._liveTriggerConsumed tracks "already acted on this on-period",
+  // reset only when the trigger entity itself reads off/unavailable - NOT a
+  // raw mirror of the last-seen state. That distinction matters: a card can
+  // freshly mount (subview navigation) with the trigger entity already "on"
+  // but this._wasVisible still false for a tick or two while layout
+  // settles. A raw last-value comparison would treat that first
+  // not-yet-visible tick as having "seen" the on-state and never fire once
+  // visibility catches up a moment later, since there's no further
+  // off->on transition for the rest of the alert window - confirmed
+  // 2026-08-21, a garage alert where the automation and switch both fired
+  // correctly but the card silently stayed on the recordings view for the
+  // full 20s. Only marking consumed once we've actually had the chance to
+  // act (this._wasVisible true) closes that gap: an unconsumed "on" just
+  // keeps retrying on each subsequent hass update until visible.
   _checkLiveTrigger() {
     const state = this._hass.states[this._config.live_trigger_entity]?.state;
-    const wasOn = this._lastLiveTriggerState === "on";
-    this._lastLiveTriggerState = state;
-    if (state === "on" && !wasOn && this._wasVisible && !this._liveActive) {
-      this._toggleLive();
+    if (state !== "on") {
+      this._liveTriggerConsumed = false;
+      return;
     }
+    if (this._liveTriggerConsumed || !this._wasVisible) return;
+    this._liveTriggerConsumed = true;
+    if (!this._liveActive) this._toggleLive();
   }
 
   getCardSize() {
